@@ -1,6 +1,89 @@
 # datadog-sync-cli
 Datadog cli tool to sync resources across organizations.
 
+## FindLaw Transition [Melissa's addition]
+This repo is a fork of the `datadog-sync-cli` Datadog repo along with additional Python scripting to help with tagging changes between two Datadog organizations. The added files are `do_all_changes.py` as well as everything in the `transition_tagging` folder.
+
+Context: In December 2024, [FindLaw](findlaw.com) was sold from Thomson Reuters (TR) to Internet Brands (IB). I was tasked with transitioning FindLaw's Datadog resources (e.g. monitors, synthetic tests) from our TR-managed Datadog (DD) accounts to our IB-managed DD account.
+
+I wrote Python code to aid in the conversion of values in the JSON files that were imported from the CLI tool. My tool works like a CLI with the ability to filter based on a specific tag and converts JSON files differently based on resource type (monitors, dashboards, synthetic tests). This code can be modified for other developers looking to transfer resources between Datadog accounts and needing to modify tagging along the way.
+
+Impact: My code reduced manual conversion of over 2,000 resources and a dozen tags, saving over at least 80 hours of work. All of the resources were transferred within a week.
+
+### The custom python script
+The helper functions and tests are in `transition_tagging/` with the main function `do_tagging_changes` in `tagging_changes.py`.
+
+What the script does:
+
+- adds `business_unit:findlaw` tag
+- adds `team:findlaw` tag
+- changes `env:findlaw-xxx` to `env:xxx` where `xxx` is env ("prod", "stage", etc.), also changes `env: findlaw-xxx` to `env:xxx`
+- changes and removes `env:findlaw-ci` to `env:dev` (removes instances of ci)
+- prints resources that do not have an asset insight id. These need a manual addition of asset id (`findlaw-asset-id`)
+- renames `tr_application-asset-insight-id` tag with `findlaw-asset-id`. These are unique IDs associated with TR services
+- removes accidental `a` in asset id. (e.g. `findlaw-asset-id:xxxxx` > `findlaw-asset-id:xxxxx`)
+- removes any accidental tags like "business" and "busines" which were added to some synthetic tests (in findlaw DD account) by accident
+- removes duplicate `managed_by:datadog-sync` tags
+- Ignores resources made by terraform (`created_by:terraform`) as these resources will be moved via Terraform.
+- swaps private location values
+- swaps global variable ids
+- for smoketests (tag `smoketest`), removes extraneous tag `test_type:smoketest`
+
+## Usage
+
+### Step 0: Setup constants.py file
+The constants file (`transition_tagging/constants.py`) should be modified to according to the changes in private locations and (synthetic) global variables in your organization.
+
+### Step 1: Setup Config file
+In `config.txt`, the query from the source (e.g. legal-np) DD account is configured.
+
+Example `config.txt` file
+```
+# config
+
+destination_api_url="https://api.datadoghq.com"
+destination_api_key="<API_KEY>"
+destination_app_key="<APP_KEY>"
+source_api_key="<API_KEY>"
+source_app_key="<APP_KEY>"
+source_api_url="https://api.datadoghq.com"
+resources="synthetics_tests"
+# filter=["Type=Dashboards;Name=title;Value=Test screenboard", "Type=Monitors;Name=tags;Value=sync:true"]
+```
+Where destination would be a TR-managed DD account, and the source would be the IB-managed Avvo DD account.
+
+### Step 2: Run dd sync cli _import_ command
+Run
+
+`datadog-sync import --config config.txt --verify-ddr-status false`.
+
+This command will import the resources requested in the `config.txt` file into json files inside of `resources/source/`.
+
+### Step 3: Clean up tags with Python script
+For cleaning up tags between accounts, run
+
+`python3 do_all_changes.py`.
+
+This updates the files (just `synthetic_tests.json` for now) in `resources/source/` with the correct future tagging and cleanup needed for resources in Avvo's Datadog account.
+
+### Step 4: Run dd sync cli _sync_ command
+Run
+
+`datadog-sync sync --config config.txt --verify-ddr-status false --skip-failed-resource-connections FALSE`
+
+This command will push/export the resources requested in the `config.txt` file from the json files in `resources/source/` to the destination account. Additionally, the json files will be copied to `resources/destination/`.
+
+Before running `sync`, you can optionally run `diffs` as a dry-run. `datadog-sync diffs --config config.txt --verify-ddr-status false --skip-failed-resource-connections FALSE`.
+
+### Note
+Please do not check in resource-specific json files to version control. See/edit `.gitignore`.
+
+### Testing `tagging_changes.py`
+Tests have been written using `Pytest`.
+Run
+
+`pytest transition_tagging/tests.py`
+
 # Table of Contents
 - [Quick Start](#quick-start)
 - [Purpose](#purpose)
